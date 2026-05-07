@@ -62,3 +62,23 @@ export const assignments = {
 export const broadcast = {
   list: () => apiFetch('/broadcast/'),
 };
+
+// SOS (Task 2.5)
+export const sos = {
+  trigger: (data) => apiFetch('/volunteers/sos/', { method: 'POST', body: JSON.stringify(data) }),
+};
+
+// Fatigue & Wellness (Task 2.2)
+export const wellness = {
+  getFatigue: (volId) => apiFetch(`/volunteers/${volId}/fatigue/`),
+  getCertificate: (volId) => apiFetch(`/volunteers/${volId}/certificate/`),
+};
+
+// Voice → Text Structure (Task 2.7)
+export const textStructure = {
+  analyze: (text, language = 'en-IN') =>
+    apiFetch('/ocr/structure-text/', { method: 'POST', body: JSON.stringify({ text, language }) }),
+};
+
+// Token export for WebSocket
+export { getToken };

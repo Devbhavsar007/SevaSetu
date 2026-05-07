@@ -38,6 +38,7 @@ class NeedStatus(str, Enum):
     in_progress = "in_progress"
     resolved = "resolved"
     cancelled = "cancelled"
+    predicted = "predicted"  # NEW: AI-predicted draft needs (Task 2.1)
 
 
 class VolunteerAvailability(str, Enum):
@@ -73,6 +74,8 @@ class NeedSource(str, Enum):
     ocr = "ocr"
     broadcast = "broadcast"
     api = "api"
+    ai_prediction = "ai_prediction"  # NEW: From prediction engine (Task 2.1)
+    sos = "sos"  # NEW: From SOS panic button (Task 2.5)
 
 
 # ============================================================
@@ -516,3 +519,190 @@ class ErrorResponse(BaseModel):
 # Resolve forward references for Python 3.8
 # ============================================================
 OCRExtractResponse.model_rebuild()
+
+
+# ============================================================
+# PREDICTION SCHEMAS (Task 2.1)
+# ============================================================
+
+class PredictionGenerateRequest(BaseModel):
+    disaster_type: str = Field(..., description="FLOOD, CYCLONE, EXTREME_HEAT, THUNDERSTORM")
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    radius_km: float = Field(default=10.0, ge=0.5, le=200)
+    estimated_population: int = Field(default=1000, ge=1)
+
+
+class PredictedNeed(BaseModel):
+    category: str
+    title: str
+    urgency: int
+    people_affected: int
+    probability: float
+    latitude: float
+    longitude: float
+
+
+class PredictionResponse(BaseModel):
+    predicted_needs: List[PredictedNeed]
+    confidence_score: float
+    disaster_type: str
+
+
+# ============================================================
+# FATIGUE SCHEMAS (Task 2.2)
+# ============================================================
+
+class FatigueResponse(BaseModel):
+    fatigue_score: float
+    tasks_last_48h: int
+    rest_recommended: bool
+    last_task_completed_at: Optional[datetime] = None
+
+
+# ============================================================
+# INVENTORY SCHEMAS (Task 2.3)
+# ============================================================
+
+class InventoryCreateRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=255)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    address: Optional[str] = Field(default=None, max_length=500)
+
+
+class InventoryItemCreateRequest(BaseModel):
+    category: str = Field(..., min_length=2, max_length=50)
+    item_name: str = Field(..., min_length=2, max_length=255)
+    quantity: int = Field(default=0, ge=0)
+    unit: str = Field(default="units", max_length=50)
+    minimum_threshold: int = Field(default=10, ge=0)
+
+
+class InventoryItemAdjust(BaseModel):
+    quantity_change: int  # positive = add, negative = remove
+
+
+class InventoryItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    inventory_id: str
+    category: str
+    item_name: str
+    quantity: int
+    unit: str
+    minimum_threshold: int
+    is_low_stock: bool = False
+    last_updated: Optional[datetime] = None
+
+
+class InventoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    name: str
+    latitude: float
+    longitude: float
+    address: Optional[str] = None
+    managed_by: Optional[str] = None
+    items: List[InventoryItemResponse] = []
+    total_items: int = 0
+    low_stock_count: int = 0
+    created_at: Optional[datetime] = None
+
+
+class NearbyInventoryResponse(BaseModel):
+    inventory_id: str
+    name: str
+    distance_km: float
+    stock: int
+    unit: str
+    category: str
+
+
+# ============================================================
+# SOS SCHEMAS (Task 2.5)
+# ============================================================
+
+class SOSRequest(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    message: str = Field(default="SOS triggered", max_length=500)
+
+
+class SOSResponse(BaseModel):
+    sos_id: str
+    need_id: str
+    message: str
+    estimated_response_time: str
+
+
+# ============================================================
+# CERTIFICATE SCHEMAS (Task 2.6)
+# ============================================================
+
+class CertificateTier(BaseModel):
+    name: str
+    required_tasks: int
+    unlocked: bool
+    tasks_remaining: int
+
+
+class CertificateResponse(BaseModel):
+    eligible_tiers: List[CertificateTier]
+    current_tier: Optional[str] = None
+    tasks_completed: int
+    tasks_to_next: int
+
+
+# ============================================================
+# VOICE INPUT SCHEMAS (Task 2.7)
+# ============================================================
+
+class StructureTextRequest(BaseModel):
+    text: str = Field(..., min_length=5, max_length=5000)
+    language: str = Field(default="en-IN")
+
+
+# ============================================================
+# SKILL VERIFICATION SCHEMAS (Task 3.3)
+# ============================================================
+
+class SkillVerifyRequest(BaseModel):
+    skill: str = Field(..., min_length=1, max_length=100)
+    certificate_url: Optional[str] = Field(default=None, max_length=512)
+
+
+class SkillVerificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    volunteer_id: str
+    skill: str
+    verified: bool
+    verified_by: Optional[str] = None
+    certificate_url: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    created_at: datetime
+
+
+# ============================================================
+# AUDIT SCHEMAS (Task 3.2)
+# ============================================================
+
+class AuditLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    action: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    details: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
+
+
+class AuditSummaryResponse(BaseModel):
+    actions_today: int
+    top_actors: List[dict]
+    most_common_actions: List[dict]
+    suspicious_activity: List[dict]

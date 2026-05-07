@@ -74,6 +74,11 @@ class Volunteer(Base):
     rating = Column(Float, default=0.0)
     total_ratings = Column(Integer, default=0)
     fcm_token = Column(String(512))
+    # NEW: Fatigue tracking (Task 2.2)
+    last_task_completed_at = Column(DateTime, nullable=True)
+    tasks_last_48h = Column(Integer, default=0)
+    fatigue_score = Column(Float, default=0.0)  # 0.0 (fresh) to 1.0 (burned out)
+    rest_recommended = Column(Boolean, default=False)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -253,3 +258,78 @@ class Broadcast(Base):
 
     def __repr__(self):
         return f"<Broadcast '{self.title}' r={self.radius_km}km>"
+
+
+# ============================================================
+# INVENTORY — warehouse/stock location (Task 2.3)
+# ============================================================
+class Inventory(Base):
+    __tablename__ = "inventories"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    name = Column(String(255), nullable=False)  # "Andheri NGO Warehouse"
+    latitude = Column(Float)
+    longitude = Column(Float)
+    address = Column(String(500))
+    managed_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    # Relationships
+    items = relationship("InventoryItem", back_populates="inventory", cascade="all, delete-orphan")
+    manager = relationship("User")
+
+    def __repr__(self):
+        return f"<Inventory '{self.name}'>"
+
+
+class InventoryItem(Base):
+    __tablename__ = "inventory_items"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    inventory_id = Column(String(36), ForeignKey("inventories.id", ondelete="CASCADE"), nullable=False)
+    category = Column(String(50), nullable=False)  # matches NeedCategory
+    item_name = Column(String(255), nullable=False)  # "Food Packets - 1kg"
+    quantity = Column(Integer, default=0)
+    unit = Column(String(50), default="units")  # "packets", "liters", "sets"
+    minimum_threshold = Column(Integer, default=10)  # alert when below this
+    last_updated = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+
+    # Relationships
+    inventory = relationship("Inventory", back_populates="items")
+
+    __table_args__ = (
+        Index("idx_inventory_item_category", "category"),
+    )
+
+    def __repr__(self):
+        return f"<InventoryItem '{self.item_name}' qty={self.quantity}>"
+
+
+# ============================================================
+# SKILL VERIFICATION — admin-verified volunteer skills (Task 3.3)
+# ============================================================
+class SkillVerification(Base):
+    __tablename__ = "skill_verifications"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    volunteer_id = Column(String(36), ForeignKey("volunteers.id", ondelete="CASCADE"), nullable=False)
+    skill = Column(String(100), nullable=False)
+    verified = Column(Boolean, default=False)
+    verified_by = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    certificate_url = Column(String(512), nullable=True)  # uploaded proof
+    verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    # Relationships
+    volunteer = relationship("Volunteer")
+    verifier = relationship("User")
+
+    __table_args__ = (
+        Index("idx_skill_verification_volunteer", "volunteer_id"),
+        Index("idx_skill_verification_skill", "skill"),
+    )
+
+    def __repr__(self):
+        return f"<SkillVerification {self.skill} verified={self.verified}>"

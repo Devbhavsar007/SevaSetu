@@ -5,7 +5,7 @@
 const API_BASE = 'https://sevasetu-bnup.onrender.com/api/v1';
 
 // Get stored JWT token
-function getToken() {
+export function getToken() {
   return localStorage.getItem('smartalloc_token');
 }
 
@@ -222,4 +222,74 @@ export const broadcast = {
   },
 
   get: (id) => apiFetch(`/broadcast/${id}/`),
+};
+
+// ============================================================
+// PREDICTIONS (Task 2.1)
+// ============================================================
+export const predictions = {
+  generate: (data) =>
+    apiFetch('/predictions/generate/', { method: 'POST', body: JSON.stringify(data) }),
+
+  list: () => apiFetch('/predictions/'),
+
+  confirm: (needId) =>
+    apiFetch(`/predictions/${needId}/confirm/`, { method: 'PATCH' }),
+
+  dismiss: (needId) =>
+    apiFetch(`/predictions/${needId}/dismiss/`, { method: 'PATCH' }),
+};
+
+// ============================================================
+// INVENTORY (Task 2.3)
+// ============================================================
+export const inventory = {
+  list: () => apiFetch('/inventory/'),
+
+  create: (data) =>
+    apiFetch('/inventory/', { method: 'POST', body: JSON.stringify(data) }),
+
+  addItem: (inventoryId, data) =>
+    apiFetch(`/inventory/${inventoryId}/items/`, { method: 'POST', body: JSON.stringify(data) }),
+
+  adjustItem: (itemId, data) =>
+    apiFetch(`/inventory/items/${itemId}/`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  findNearby: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/inventory/nearby/?${query}`);
+  },
+
+  getAlerts: () => apiFetch('/inventory/alerts/'),
+};
+
+// ============================================================
+// AUDIT (Task 3.2)
+// ============================================================
+export const audit = {
+  list: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiFetch(`/analytics/audit/?${query}`);
+  },
+
+  summary: () => apiFetch('/analytics/audit/summary/'),
+};
+
+// ============================================================
+// VOLUNTEER EXTRAS (Tasks 2.2, 2.5, 2.6, 3.3)
+// ============================================================
+export const volunteerExtras = {
+  getFatigue: (volId) => apiFetch(`/volunteers/${volId}/fatigue/`),
+  getCertificate: (volId) => apiFetch(`/volunteers/${volId}/certificate/`),
+  verifySkill: (volId, data) =>
+    apiFetch(`/volunteers/${volId}/verify-skill/`, { method: 'POST', body: JSON.stringify(data) }),
+  getSkillVerifications: (volId) => apiFetch(`/volunteers/${volId}/skill-verifications/`),
+};
+
+// ============================================================
+// TEXT STRUCTURE (Task 2.7)
+// ============================================================
+export const textStructure = {
+  analyze: (text, language = 'en-IN') =>
+    apiFetch('/ocr/structure-text/', { method: 'POST', body: JSON.stringify({ text, language }) }),
 };

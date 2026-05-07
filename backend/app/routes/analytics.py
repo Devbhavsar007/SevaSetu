@@ -460,3 +460,126 @@ async def get_public_showcase(db: Session = Depends(get_db)):
         "volunteers": volunteers_data,
         "campaigns": campaigns_data
     }
+
+
+# ============================================================
+# AUDIT TRAIL (Task 3.2)
+# ============================================================
+
+@router.get("/audit/")
+async def get_audit_log(
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=200),
+    action: Optional[str] = Query(default=None),
+    user_id: Optional[str] = Query(default=None),
+    from_date: Optional[str] = Query(default=None, alias="from"),
+    to_date: Optional[str] = Query(default=None, alias="to"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_admin),
+):
+    """Paginated audit log with filtering."""
+    from ..models import User
+
+    query = db.query(AuditLog).order_by(AuditLog.created_at.desc())
+
+    if action:
+        query = query.filter(AuditLog.action.ilike(f"%{action}%"))
+    if user_id:
+        query = query.filter(AuditLog.user_id == user_id)
+    if from_date:
+        try:
+            from_dt = datetime.fromisoformat(from_date)
+            query = query.filter(AuditLog.created_at >= from_dt)
+        except ValueError:
+            pass
+    if to_date:
+        try:
+            to_dt = datetime.fromisoformat(to_date)
+            query = query.filter(AuditLog.created_at <= to_dt)
+        except ValueError:
+            pass
+
+    total = query.count()
+    offset = (page - 1) * limit
+    items = query.offset(offset).limit(limit).all()
+
+    results = []
+    for item in items:
+        user = db.query(User).filter(User.id == item.user_id).first() if item.user_id else None
+        results.append({
+            "id": item.id,
+            "user_id": item.user_id,
+            "user_name": user.name if user else None,
+            "action": item.action,
+            "entity_type": item.entity_type,
+            "entity_id": item.entity_id,
+            "details": item.details,
+            "ip_address": item.ip_address,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        })
+
+    return {
+        "items": results,
+        "total": total,
+        "page": page,
+        "total_pages": (total + limit - 1) // limit,
+    }
+
+
+@router.get("/audit/summary/")
+async def get_audit_summary(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_admin),
+):
+    """Audit summary with suspicious activity detection."""
+    from ..models import User
+
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Actions today
+    actions_today = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.created_at >= today_start
+    ).scalar() or 0
+
+    # Top actors (most actions)
+    top_actors_raw = db.query(
+        AuditLog.user_id,
+        func.count(AuditLog.id).label("count"),
+    ).filter(
+        AuditLog.user_id.isnot(None),
+        AuditLog.created_at >= today_start,
+    ).group_by(AuditLog.user_id).order_by(func.count(AuditLog.id).desc()).limit(5).all()
+
+    top_actors = []
+    for uid, count in top_actors_raw:
+        user = db.query(User).filter(User.id == uid).first()
+        top_actors.append({"user_id": uid, "user_name": user.name if user else "Unknown", "action_count": count})
+
+    # Most common actions
+    common_actions = db.query(
+        AuditLog.action,
+        func.count(AuditLog.id).label("count"),
+    ).filter(
+        AuditLog.created_at >= today_start,
+    ).group_by(AuditLog.action).order_by(func.count(AuditLog.id).desc()).limit(10).all()
+
+    most_common = [{"action": a, "count": c} for a, c in common_actions]
+
+    # Suspicious activity: >10 failed logins in last hour, or unusual hours (2-5 AM)
+    suspicious = []
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    failed_logins = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.action == "auth.login_failed",
+        AuditLog.created_at >= one_hour_ago,
+    ).scalar() or 0
+
+    if failed_logins > 10:
+        suspicious.append({"type": "brute_force", "detail": f"{failed_logins} failed logins in last hour", "severity": "high"})
+
+    return {
+        "actions_today": actions_today,
+        "top_actors": top_actors,
+        "most_common_actions": most_common,
+        "suspicious_activity": suspicious,
+    }
+

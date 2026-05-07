@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import User, Need, AuditLog
-from ..schemas import OCRExtractResponse, NeedResponse, MessageResponse
+from ..schemas import OCRExtractResponse, NeedResponse, MessageResponse, StructureTextRequest
 from ..middleware.auth import get_current_user
 from ..services import gemini_service
 from ..config import get_settings
@@ -217,3 +217,80 @@ async def extract_and_create_need(
     # Import here to avoid circular import
     from .needs import _need_to_response
     return _need_to_response(need, db)
+
+
+@router.post("/structure-text/", response_model=OCRExtractResponse)
+async def structure_text(
+    request: Request,
+    body: StructureTextRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Structure text from voice input or manual entry using Gemini AI.
+    Extracts: category, urgency, location, people_affected.
+    Same schema as OCR extract but no image processing.
+    """
+    from ..schemas import OCRStructuredData
+
+    # Use Gemini to structure the text
+    prompt = f"""You are a community need classifier for an NGO disaster response platform.
+
+Analyze this text (potentially transcribed from voice in Hindi or English) and extract structured data:
+
+TEXT: "{body.text}"
+LANGUAGE: {body.language}
+
+Return ONLY a JSON object:
+{{
+    "raw_text": "{body.text}",
+    "original_language": "{body.language}",
+    "structured_data": {{
+        "title": "Short summary (max 100 chars)",
+        "description": "Full description",
+        "category": "one of: medical, food, shelter, rescue, education, clothing, sanitation, water, other",
+        "urgency": 1-5,
+        "location_text": "Extracted location if mentioned",
+        "people_affected": estimated number,
+        "key_issues": ["issue1", "issue2"]
+    }},
+    "confidence": 0.0 to 1.0
+}}"""
+
+    contents = [{"parts": [{"text": prompt}]}]
+    from ..services.gemini_service import _call_gemini, _parse_json_response
+
+    result_text = _call_gemini(contents)
+    if result_text:
+        parsed = _parse_json_response(result_text)
+        if parsed:
+            # Audit
+            audit = AuditLog(
+                user_id=current_user.id,
+                action="ocr.text_structured",
+                entity_type="ocr",
+                details=json.dumps({
+                    "language": body.language,
+                    "text_length": len(body.text),
+                    "category": parsed.get("structured_data", {}).get("category") if parsed.get("structured_data") else None,
+                }),
+                ip_address=request.client.host if request.client else None,
+            )
+            db.add(audit)
+            db.commit()
+
+            return OCRExtractResponse(
+                raw_text=parsed.get("raw_text", body.text),
+                original_language=parsed.get("original_language", body.language),
+                structured_data=parsed.get("structured_data"),
+                confidence=parsed.get("confidence", 0.7),
+            )
+
+    # Fallback
+    return OCRExtractResponse(
+        raw_text=body.text,
+        original_language=body.language,
+        structured_data=None,
+        confidence=0.0,
+    )
+

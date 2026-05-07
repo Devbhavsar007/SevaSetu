@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, ClipboardList, Map, Users, BrainCircuit, ScanLine, Radio, Sun, Moon } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Map, Users, BrainCircuit, ScanLine, Radio, Sun, Moon, Package, Shield, LogOut } from 'lucide-react';
 import DisasterAlertSystem from './DisasterAlertSystem';
 
 const navItems = [
@@ -12,6 +12,8 @@ const navItems = [
   { path: '/matching', icon: BrainCircuit, label: 'Smart Match' },
   { path: '/ocr', icon: ScanLine, label: 'OCR Scanner' },
   { path: '/broadcast', icon: Radio, label: 'Broadcast' },
+  { path: '/inventory', icon: Package, label: 'Inventory' },
+  { path: '/audit', icon: Shield, label: 'Audit Trail' },
 ];
 
 export default function Layout() {
@@ -106,6 +108,21 @@ export default function Layout() {
               <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>{user?.name || 'Admin'}</div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{user?.role || 'admin'}</div>
             </div>
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to logout?')) {
+                  const { logout } = require('../context/AuthContext');
+                }
+              }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text-muted)', padding: '6px',
+                borderRadius: '6px', display: 'flex', alignItems: 'center',
+              }}
+              title="Logout"
+            >
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
       </aside>

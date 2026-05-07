@@ -176,6 +176,19 @@ async def create_assignment(
 
     # Build response
     user = db.query(User).filter(User.id == vol.user_id).first()
+
+    # NEW: Emit WebSocket event for real-time updates
+    try:
+        from .realtime import emit_event
+        await emit_event("assignment.created", {
+            "id": assignment.id, "need_id": need.id,
+            "volunteer_id": vol.id, "need_title": need.title,
+            "volunteer_name": user.name if user else "Unknown",
+            "match_score": match_score,
+        }, room="admin")
+    except Exception as e:
+        logger.warning(f"WS emit failed for assignment.created: {e}")
+
     return AssignmentResponse(
         id=assignment.id,
         need_id=assignment.need_id,

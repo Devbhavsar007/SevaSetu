@@ -20,6 +20,7 @@ from ..schemas import (
     VolunteerLocationUpdate, VolunteerAvailabilityUpdate, VolunteerFCMUpdate,
     VolunteerResponse, VolunteerBriefResponse,
     AssignmentResponse, MessageResponse, VolunteerAvailability,
+    SOSRequest, SkillVerifyRequest,
 )
 from ..middleware.auth import get_current_user, get_current_admin
 from ..services.geo_service import haversine_distance, bounding_box
@@ -313,6 +314,16 @@ async def update_availability(
     db.add(audit)
     db.commit()
 
+    # NEW: Emit WebSocket event for real-time updates
+    try:
+        from .realtime import emit_event
+        await emit_event("volunteer.updated", {
+            "id": vol.id, "availability": body.availability.value,
+            "old_availability": old_status,
+        }, room="admin")
+    except Exception as e:
+        logger.warning(f"WS emit failed for volunteer.updated: {e}")
+
     return MessageResponse(message=f"Availability changed: {old_status} → {body.availability.value}")
 
 
@@ -391,3 +402,241 @@ async def get_volunteer_tasks(
         ))
 
     return results
+
+
+# ============================================================
+# SOS PANIC BUTTON (Task 2.5)
+# ============================================================
+
+@router.post("/sos/", status_code=status.HTTP_201_CREATED)
+async def trigger_sos(
+    body: SOSRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """SOS — Emergency panic button for volunteers."""
+    from ..schemas import SOSResponse
+
+    need = Need(
+        reported_by=current_user.id,
+        title=f"\U0001f198 SOS \u2014 {current_user.name} needs immediate help",
+        description=body.message,
+        category="rescue",
+        urgency=5,
+        latitude=body.latitude,
+        longitude=body.longitude,
+        people_affected=1,
+        source="sos",
+        status="open",
+    )
+    db.add(need)
+
+    audit = AuditLog(
+        user_id=current_user.id,
+        action="sos.triggered",
+        entity_type="need",
+        entity_id=need.id,
+        details=json.dumps({"lat": body.latitude, "lon": body.longitude, "message": body.message}),
+        ip_address=request.client.host if request.client else None,
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(need)
+
+    try:
+        from .realtime import emit_event
+        await emit_event("sos.triggered", {
+            "id": need.id, "user_name": current_user.name,
+            "latitude": body.latitude, "longitude": body.longitude,
+            "message": body.message,
+        }, room="admin")
+    except Exception as e:
+        logger.warning(f"WS emit failed for sos.triggered: {e}")
+
+    return SOSResponse(
+        sos_id=need.id, need_id=need.id,
+        message="SOS sent \u2014 Help is on the way",
+        estimated_response_time="~15 minutes",
+    )
+
+
+# ============================================================
+# FATIGUE SCORE (Task 2.2)
+# ============================================================
+
+def _calculate_fatigue(vol: Volunteer, db: Session) -> dict:
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    cutoff_24h = now - timedelta(hours=24)
+    cutoff_48h = now - timedelta(hours=48)
+
+    tasks_24h = db.query(Assignment).filter(
+        Assignment.volunteer_id == vol.id,
+        Assignment.status == "completed",
+        Assignment.completed_at >= cutoff_24h,
+    ).count()
+
+    tasks_48h = db.query(Assignment).filter(
+        Assignment.volunteer_id == vol.id,
+        Assignment.status == "completed",
+        Assignment.completed_at >= cutoff_48h,
+    ).count()
+
+    hours_since_last = 0
+    if vol.last_task_completed_at:
+        hours_since_last = (now - vol.last_task_completed_at).total_seconds() / 3600
+
+    task_24h_score = min(tasks_24h / 3.0, 1.0) * 0.5
+    task_48h_score = min(tasks_48h / 5.0, 1.0) * 0.3
+    rest_score = min(hours_since_last / 48.0, 1.0) * 0.2 if vol.last_task_completed_at else 0
+
+    fatigue = round(task_24h_score + task_48h_score + rest_score, 3)
+    fatigue = min(1.0, max(0.0, fatigue))
+    rest_recommended = fatigue >= 0.8
+
+    vol.tasks_last_48h = tasks_48h
+    vol.fatigue_score = fatigue
+    vol.rest_recommended = rest_recommended
+
+    return {
+        "fatigue_score": fatigue,
+        "tasks_last_48h": tasks_48h,
+        "rest_recommended": rest_recommended,
+        "last_task_completed_at": vol.last_task_completed_at,
+    }
+
+
+@router.get("/{volunteer_id}/fatigue/")
+async def get_fatigue_score(
+    volunteer_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get volunteer fatigue/wellness score."""
+    vol = db.query(Volunteer).filter(Volunteer.id == volunteer_id).first()
+    if not vol:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+    result = _calculate_fatigue(vol, db)
+    db.commit()
+    from ..schemas import FatigueResponse
+    return FatigueResponse(**result)
+
+
+# ============================================================
+# CERTIFICATE ELIGIBILITY (Task 2.6)
+# ============================================================
+
+CERTIFICATE_TIERS = [
+    {"name": "First Responder", "required_tasks": 1},
+    {"name": "Active Volunteer", "required_tasks": 5},
+    {"name": "Community Hero", "required_tasks": 10},
+    {"name": "Disaster Relief Champion", "required_tasks": 25},
+]
+
+
+@router.get("/{volunteer_id}/certificate/")
+async def get_certificate_eligibility(
+    volunteer_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get volunteer certificate tier eligibility."""
+    vol = db.query(Volunteer).filter(Volunteer.id == volunteer_id).first()
+    if not vol:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+
+    from ..schemas import CertificateResponse, CertificateTier
+    tiers = []
+    current_tier = None
+    tasks_to_next = 0
+    for t in CERTIFICATE_TIERS:
+        unlocked = vol.tasks_completed >= t["required_tasks"]
+        remaining = max(0, t["required_tasks"] - vol.tasks_completed)
+        tiers.append(CertificateTier(name=t["name"], required_tasks=t["required_tasks"], unlocked=unlocked, tasks_remaining=remaining))
+        if unlocked:
+            current_tier = t["name"]
+    for t in CERTIFICATE_TIERS:
+        if vol.tasks_completed < t["required_tasks"]:
+            tasks_to_next = t["required_tasks"] - vol.tasks_completed
+            break
+    return CertificateResponse(eligible_tiers=tiers, current_tier=current_tier, tasks_completed=vol.tasks_completed, tasks_to_next=tasks_to_next)
+
+
+# ============================================================
+# SKILL VERIFICATION (Task 3.3)
+# ============================================================
+
+@router.post("/{volunteer_id}/verify-skill/", status_code=status.HTTP_201_CREATED)
+async def verify_skill(
+    volunteer_id: str,
+    body: SkillVerifyRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin marks a volunteer skill as verified."""
+    from ..models import SkillVerification
+    from ..schemas import SkillVerificationResponse
+
+    vol = db.query(Volunteer).filter(Volunteer.id == volunteer_id).first()
+    if not vol:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+
+    existing = db.query(SkillVerification).filter(
+        SkillVerification.volunteer_id == volunteer_id,
+        SkillVerification.skill == body.skill.lower(),
+    ).first()
+
+    if existing:
+        existing.verified = True
+        existing.verified_by = current_user.id
+        existing.verified_at = datetime.now(timezone.utc)
+        existing.certificate_url = body.certificate_url
+        db.commit()
+        db.refresh(existing)
+        sv = existing
+    else:
+        sv = SkillVerification(
+            volunteer_id=volunteer_id,
+            skill=body.skill.lower(),
+            verified=True,
+            verified_by=current_user.id,
+            verified_at=datetime.now(timezone.utc),
+            certificate_url=body.certificate_url,
+        )
+        db.add(sv)
+        db.commit()
+        db.refresh(sv)
+
+    return SkillVerificationResponse(
+        id=sv.id, volunteer_id=sv.volunteer_id, skill=sv.skill,
+        verified=sv.verified, verified_by=sv.verified_by,
+        certificate_url=sv.certificate_url, verified_at=sv.verified_at,
+        created_at=sv.created_at,
+    )
+
+
+@router.get("/{volunteer_id}/skill-verifications/")
+async def list_skill_verifications(
+    volunteer_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List a volunteer's skill verifications."""
+    from ..models import SkillVerification
+    from ..schemas import SkillVerificationResponse
+
+    verifications = db.query(SkillVerification).filter(
+        SkillVerification.volunteer_id == volunteer_id
+    ).all()
+
+    return [
+        SkillVerificationResponse(
+            id=sv.id, volunteer_id=sv.volunteer_id, skill=sv.skill,
+            verified=sv.verified, verified_by=sv.verified_by,
+            certificate_url=sv.certificate_url, verified_at=sv.verified_at,
+            created_at=sv.created_at,
+        )
+        for sv in verifications
+    ]

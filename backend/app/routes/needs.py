@@ -125,6 +125,19 @@ async def create_need(
     db.refresh(need)
 
     logger.info(f"Need created: '{need.title}' [{need.category}] urgency={need.urgency} by {current_user.name}")
+
+    # NEW: Emit WebSocket event for real-time updates
+    try:
+        from .realtime import emit_event
+        await emit_event("need.created", {
+            "id": need.id, "title": need.title, "category": need.category,
+            "urgency": need.urgency, "status": need.status,
+            "latitude": need.latitude, "longitude": need.longitude,
+            "people_affected": need.people_affected,
+        }, room="admin")
+    except Exception as e:
+        logger.warning(f"WS emit failed for need.created: {e}")
+
     return _need_to_response(need, db)
 
 
@@ -296,6 +309,17 @@ async def update_need(
 
     db.commit()
     db.refresh(need)
+
+    # NEW: Emit WebSocket event for real-time updates
+    try:
+        from .realtime import emit_event
+        await emit_event("need.updated", {
+            "id": need.id, "title": need.title, "category": need.category,
+            "urgency": need.urgency, "status": need.status,
+            "changes": changes,
+        }, room="admin")
+    except Exception as e:
+        logger.warning(f"WS emit failed for need.updated: {e}")
 
     return _need_to_response(need, db)
 

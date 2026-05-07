@@ -14,6 +14,9 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from .config import get_settings
 from .database import init_db
@@ -90,6 +93,11 @@ app.add_middleware(
     expose_headers=["X-Total-Count"],
 )
 
+# Rate limiter (Task 3.1)
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Global error handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -111,7 +119,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 # ============================================================
 # INCLUDE ROUTERS
 # ============================================================
-from .routes import auth, needs, volunteers, matching, analytics, ocr, broadcast
+from .routes import auth, needs, volunteers, matching, analytics, ocr, broadcast, realtime
+from .routes import predictions, inventory
 
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(needs.router, prefix=settings.API_V1_PREFIX)
@@ -120,6 +129,9 @@ app.include_router(matching.router, prefix=settings.API_V1_PREFIX)
 app.include_router(analytics.router, prefix=settings.API_V1_PREFIX)
 app.include_router(ocr.router, prefix=settings.API_V1_PREFIX)
 app.include_router(broadcast.router, prefix=settings.API_V1_PREFIX)
+app.include_router(realtime.router)  # WebSocket — no prefix needed
+app.include_router(predictions.router, prefix=settings.API_V1_PREFIX)
+app.include_router(inventory.router, prefix=settings.API_V1_PREFIX)
 
 
 # ============================================================
@@ -148,7 +160,7 @@ async def root():
 @app.get("/health", tags=["System"])
 async def health_check():
     """Health check for monitoring and load balancers."""
-    from .database import SessionLocal
+    from .database import SessionLocal, get_database_engine_name
     from sqlalchemy import text
     try:
         db = SessionLocal()
@@ -161,6 +173,7 @@ async def health_check():
     return {
         "status": "healthy" if db_status == "healthy" else "degraded",
         "database": db_status,
+        "database_engine": get_database_engine_name(),
         "environment": settings.APP_ENV,
         "gemini_configured": bool(settings.GEMINI_API_KEY),
         "firebase_configured": Path(settings.FIREBASE_CREDENTIALS_PATH).exists(),

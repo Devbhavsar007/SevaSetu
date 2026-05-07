@@ -1,6 +1,6 @@
 fastapi==0.115.0
 uvicorn[standard]==0.23.2
-sqlalchemy==2.0.21
+sqlalchemy>=2.0.36
 pydantic==2.10.3
 pydantic-settings==2.7.0
 python-jose[cryptography]==3.3.0
@@ -13,3 +13,8 @@ python-dotenv==1.0.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 aiofiles==23.2.1
+websockets>=12.0
+slowapi==0.1.9
+# PostgreSQL drivers — only needed on production (Render)
+# Install manually if using PostgreSQL locally:
+#   pip install psycopg2-binary==2.9.9 asyncpg==0.29.0

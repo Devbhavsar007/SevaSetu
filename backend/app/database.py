@@ -1,11 +1,12 @@
 """
 Database engine, session management, and initialization.
-Uses SQLAlchemy 2.0 with SQLite.
+Uses SQLAlchemy 2.0 with SQLite (local dev) or PostgreSQL (production).
 """
 
 import logging
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
+from sqlalchemy.pool import QueuePool, StaticPool
 
 from .config import get_settings
 
@@ -14,17 +15,28 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # --- Engine ---
-# check_same_thread=False is required for SQLite with FastAPI (multi-threaded)
-connect_args = {}
-if "sqlite" in settings.DATABASE_URL:
-    connect_args["check_same_thread"] = False
+# Conditionally set connect_args: check_same_thread is SQLite-only
+connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args=connect_args,
-    echo=settings.DEBUG,
-    pool_pre_ping=True,
-)
+# Use appropriate pool for each DB
+if "sqlite" in settings.DATABASE_URL:
+    engine = create_engine(
+        settings.DATABASE_URL,
+        connect_args=connect_args,
+        echo=settings.DEBUG,
+        poolclass=StaticPool if ":memory:" in settings.DATABASE_URL else None,
+        pool_pre_ping=True,
+    )
+else:
+    # PostgreSQL — use QueuePool with sensible defaults
+    engine = create_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=300,
+    )
 
 
 # Enable WAL mode and foreign keys for SQLite (better concurrency & integrity)
@@ -59,6 +71,13 @@ def get_db():
         db.close()
 
 
+def get_database_engine_name() -> str:
+    """Return the database engine type: 'postgresql' or 'sqlite'."""
+    if "postgresql" in settings.DATABASE_URL or "postgres" in settings.DATABASE_URL:
+        return "postgresql"
+    return "sqlite"
+
+
 def init_db():
     """
     Create all tables defined by ORM models.
@@ -66,4 +85,4 @@ def init_db():
     """
     from . import models  # noqa: F401 — ensures models are registered
     Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created/verified successfully.")
+    logger.info(f"Database tables created/verified successfully. Engine: {get_database_engine_name()}")
