@@ -9,10 +9,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.10.0"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: sevasetu-db
-          property: connectionString
       - fromGroup: sevasetu-env-vars
 
   # Landing Page
@@ -38,9 +34,3 @@ services:
     rootDir: admin-dashboard
     buildCommand: npm install && npm run build
     staticPublishPath: dist
-
-databases:
-  - name: sevasetu-db
-    plan: free
-    databaseName: sevasetu
-    user: sevasetu_user
