@@ -35,9 +35,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./smartalloc.db"
 
     # --- CORS ---
-    FRONTEND_LANDING_URL: str = "https://sevasetu-landing.onrender.com"
-    FRONTEND_ADMIN_URL: str = "https://sevasetu-admin.onrender.com"
-    FRONTEND_VOLUNTEER_URL: str = "https://sevasetu-volunteer.onrender.com"
+    FRONTEND_LANDING_URL: str = "https://sevasetu-landing-tn51.onrender.com"
+    FRONTEND_ADMIN_URL: str = "https://ngo-sevasetu-admin.onrender.com"
+    FRONTEND_VOLUNTEER_URL: str = "https://ngo-sevasetu-volunteer.onrender.com"
 
     # --- File Uploads ---
     UPLOAD_DIR: str = "./uploads"
@@ -67,9 +67,9 @@ class Settings(BaseSettings):
             "http://localhost:5174",
             "http://localhost:5175",
             "http://localhost:3000",
-            "https://sevasetu-landing.onrender.com",
-            "https://sevasetu-admin.onrender.com",
-            "https://sevasetu-volunteer.onrender.com",
+            "https://sevasetu-landing-tn51.onrender.com",
+            "https://ngo-sevasetu-admin.onrender.com",
+            "https://ngo-sevasetu-volunteer.onrender.com",
         ]
 
     class Config:
